@@ -1,0 +1,12 @@
+# Finalized 2026-04-17 per docs/plans/2026-04-17-paperclip-hermes-model-config.md v2
+# MiniMax direct primary -> DeepSeek direct tier 2 -> Anthropic tier 3
+
+model:
+  provider: minimax
+  default: MiniMax-M2.7
+
+fallback_providers:
+  - provider: deepseek
+    model: deepseek-chat
+  - provider: anthropic
+    model: claude-opus-4-6

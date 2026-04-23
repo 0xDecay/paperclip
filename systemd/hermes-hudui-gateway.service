@@ -1,0 +1,16 @@
+[Unit]
+Description=Hermes HUD Web UI — Gateway (Discord bot consciousness)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+Environment=HERMES_HOME=/opt/hermes/data
+ExecStart=/opt/hermes-hudui/venv/bin/hermes-hudui --host 127.0.0.1 --port 3010
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

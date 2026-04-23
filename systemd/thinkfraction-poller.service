@@ -1,0 +1,17 @@
+# /etc/systemd/system/thinkfraction-poller.service
+[Unit]
+Description=ThinkFraction Activity Poller (Paperclip → Discord)
+After=network.target thinkfraction-bot.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${THINKFRACTION_HOME}/discord-bot
+ExecStart=/usr/local/bin/op-exec ${THINKFRACTION_HOME}/discord-bot/.env.tpl /usr/bin/node ${THINKFRACTION_HOME}/discord-bot/activity-poller.js
+Restart=always
+RestartSec=30
+StandardOutput=append:${THINKFRACTION_LOG_DIR}/poller-stdout.log
+StandardError=append:${THINKFRACTION_LOG_DIR}/poller-stderr.log
+
+[Install]
+WantedBy=multi-user.target

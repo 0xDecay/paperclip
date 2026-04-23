@@ -1,0 +1,88 @@
+# hermes-paperclip-adapter monkey-patch
+# Created: 2026-04-18 (UTC 02:50)
+# Adapter package: hermes-paperclip-adapter
+# Adapter version: 0.2.1
+# Target file: /home/paperclip/node_modules/hermes-paperclip-adapter/dist/server/execute.js
+# Backup (VPS): execute.js.bak-20260418-025010 (same directory)
+# Upstream repo: https://github.com/NousResearch/hermes-paperclip-adapter
+#
+# Bugs fixed:
+#   A. Env binding corruption.
+#      execute.js read raw `ctx.agent.adapterConfig.env`, which still contains
+#      Paperclip binding dicts (e.g. {type: "secret_ref", secretId: "..."} or
+#      {type: "plain", value: "..."}). `Object.assign(env, userEnv)` then
+#      piped those objects into child_process env, where Node coerced each
+#      via `String(v)` → the literal string "[object Object]". Every
+#      POSTIZ_URL / POSTIZ_API_KEY / DISCORD_TF_CONTENT_WEBHOOK delivered to
+#      the spawned hermes CLI was "[object Object]" instead of its real value.
+#
+#      Fix: prefer `ctx.config` (resolved by Paperclip's
+#      resolveAdapterConfigForRuntime — binding values expanded to strings)
+#      over the raw `ctx.agent.adapterConfig`, and copy env entries
+#      defensively per-key: accept strings as-is, extract `.value` from any
+#      stray binding dict, omit anything else. This matches the canonical
+#      pattern used by @paperclipai/adapter-claude-local.
+#
+#   B. Missing PAPERCLIP_API_KEY.
+#      execute.js ignored `ctx.authToken`. Paperclip mints a fresh per-run
+#      JWT and passes it via `ctx.authToken`; every first-party adapter
+#      sets `env.PAPERCLIP_API_KEY = authToken` if no explicit key is
+#      configured (see adapter-claude-local/dist/server/execute.js:150).
+#      The hermes adapter never did, so child hermes processes had no way
+#      to authenticate against the Paperclip API — every `paperclip skill`
+#      call hung or failed.
+#
+#      Fix: after finalising env, inject `ctx.authToken` as
+#      `env.PAPERCLIP_API_KEY` when none is already present. Guard with
+#      `!env.PAPERCLIP_API_KEY` so any explicit operator-configured key
+#      (e.g. a dormant per-agent secret_ref) still wins.
+#
+# Re-apply after `npm install` or Hermes auto-update:
+#   1. Copy this file to the VPS:
+#        scp ops/patches/hermes-paperclip-adapter.patch \
+#            mootoshi:/tmp/hermes-adapter.patch
+#   2. Backup + apply:
+#        ssh mootoshi "sudo cp /home/paperclip/node_modules/hermes-paperclip-adapter/dist/server/execute.js{,.bak-\$(date -u +%Y%m%d-%H%M%S)}"
+#        ssh mootoshi "sudo patch -p0 -d / < /tmp/hermes-adapter.patch"
+#      (The diff is absolute-rooted; `patch -p0 -d /` applies it in place.)
+#   3. Syntax check:
+#        ssh mootoshi "sudo node --check /home/paperclip/node_modules/hermes-paperclip-adapter/dist/server/execute.js"
+#   4. Restart Paperclip:
+#        ssh mootoshi "sudo systemctl restart paperclip"
+#   5. Verify: run one heartbeat, then read /proc/<hermes-pid>/environ —
+#      POSTIZ_* / DISCORD_* should be real values, PAPERCLIP_API_KEY should
+#      be present.
+#
+# Upstream fix: file an issue at NousResearch/hermes-paperclip-adapter with
+# this diff as the proposed patch. Until upstream merges, this monkey-patch
+# needs to be re-applied after every adapter reinstall.
+--- /home/paperclip/node_modules/hermes-paperclip-adapter/dist/server/execute.js.bak-20260418-025010	2026-04-18 02:50:10.421434892 +0000
++++ /home/paperclip/node_modules/hermes-paperclip-adapter/dist/server/execute.js	2026-04-18 02:50:29.996363509 +0000
+@@ -244,7 +244,7 @@
+ // Main execute
+ // ---------------------------------------------------------------------------
+ export async function execute(ctx) {
+-    const config = (ctx.agent?.adapterConfig ?? {});
++    const config = (ctx.config ?? ctx.agent?.adapterConfig ?? {});
+     // ── Resolve configuration ──────────────────────────────────────────────
+     const hermesCmd = cfgString(config.hermesCommand) || HERMES_CLI;
+     const model = cfgString(config.model) || DEFAULT_MODEL;
+@@ -335,7 +335,17 @@
+         env.PAPERCLIP_TASK_ID = taskId;
+     const userEnv = config.env;
+     if (userEnv && typeof userEnv === "object") {
+-        Object.assign(env, userEnv);
++        for (const [k, v] of Object.entries(userEnv)) {
++            if (typeof v === "string") {
++                env[k] = v;
++            }
++            else if (v && typeof v === "object" && typeof v.value === "string") {
++                env[k] = v.value;
++            }
++        }
++    }
++    if (ctx.authToken && !env.PAPERCLIP_API_KEY) {
++        env.PAPERCLIP_API_KEY = ctx.authToken;
+     }
+     // ── Resolve working directory ──────────────────────────────────────────
+     const cwd = cfgString(config.cwd) || cfgString(ctx.config?.workspaceDir) || ".";

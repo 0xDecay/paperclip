@@ -1,0 +1,384 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-03-17T23:00:00.000Z",
+  "source": {
+    "companyId": "${COMPANY_ID}",
+    "companyName": "ThinkFraction"
+  },
+  "includes": {
+    "company": true,
+    "agents": true
+  },
+  "company": {
+    "path": "COMPANY.md",
+    "name": "ThinkFraction",
+    "description": "Fractional AI co-founder consultancy — Revenue Intelligence, AI Outreach, Speed-to-Lead",
+    "brandColor": "#00A85A",
+    "requireBoardApprovalForNewAgents": true
+  },
+  "agents": [
+    {
+      "slug": "jet",
+      "name": "Jet",
+      "path": "agents/jet/AGENTS.md",
+      "role": "cmo",
+      "title": "Content Lead",
+      "icon": "sparkles",
+      "capabilities": null,
+      "reportsToSlug": null,
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-sonnet-4-6",
+        "maxTurnsPerRun": 25,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "cooldownSec": 600,
+          "intervalSec": 302400
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "metadata": null
+    },
+    {
+      "slug": "spike",
+      "name": "Spike",
+      "path": "agents/spike/AGENTS.md",
+      "role": "researcher",
+      "title": "Outreach Lead",
+      "icon": "target",
+      "capabilities": null,
+      "reportsToSlug": null,
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-sonnet-4-6",
+        "maxTurnsPerRun": 25,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "cooldownSec": 600,
+          "intervalSec": 604800
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 1500,
+      "metadata": null
+    },
+    {
+      "slug": "tf-frasier",
+      "name": "Routing Intelligence",
+      "path": "agents/tf-frasier/AGENTS.md",
+      "role": "router",
+      "title": "Routing Intelligence",
+      "icon": "brain",
+      "capabilities": null,
+      "reportsToSlug": null,
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-haiku-4-5-20251001",
+        "maxTurnsPerRun": 15,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "enabled": false
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "metadata": null
+    },
+    {
+      "slug": "ed",
+      "name": "Ed",
+      "path": "agents/ed/AGENTS.md",
+      "role": "researcher",
+      "title": "Research Analyst",
+      "icon": "microscope",
+      "capabilities": null,
+      "reportsToSlug": "misato",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-sonnet-4-6",
+        "maxTurnsPerRun": 30,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "enabled": false
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "metadata": null
+    },
+    {
+      "slug": "toji",
+      "name": "Toji",
+      "path": "agents/toji/AGENTS.md",
+      "role": "analyst",
+      "title": "Financial Analyst",
+      "icon": "chart",
+      "capabilities": null,
+      "reportsToSlug": "misato",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-sonnet-4-6",
+        "maxTurnsPerRun": 30,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "enabled": false
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "metadata": null
+    },
+    {
+      "slug": "heero",
+      "name": "Heero",
+      "path": "agents/heero/AGENTS.md",
+      "role": "engineer",
+      "title": "Lead Engineer",
+      "icon": "hammer",
+      "capabilities": null,
+      "reportsToSlug": "misato",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-opus-4-6",
+        "maxTurnsPerRun": 40,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "enabled": false
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "metadata": null
+    },
+    {
+      "slug": "misato",
+      "name": "Misato",
+      "path": "agents/misato/AGENTS.md",
+      "role": "pm",
+      "title": "Engineering PM",
+      "icon": "clipboard",
+      "capabilities": null,
+      "reportsToSlug": null,
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-opus-4-6",
+        "maxTurnsPerRun": 30,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "enabled": false
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "metadata": null
+    },
+    {
+      "slug": "ritsuko",
+      "name": "Ritsuko",
+      "path": "agents/ritsuko/AGENTS.md",
+      "role": "engineer",
+      "title": "Backend Engineer",
+      "icon": "terminal",
+      "capabilities": null,
+      "reportsToSlug": "heero",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-opus-4-6",
+        "maxTurnsPerRun": 40,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "enabled": false
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "metadata": null
+    },
+    {
+      "slug": "quatre",
+      "name": "Quatre",
+      "path": "agents/quatre/AGENTS.md",
+      "role": "engineer",
+      "title": "Full-Stack Engineer",
+      "icon": "plug",
+      "capabilities": null,
+      "reportsToSlug": "heero",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-opus-4-6",
+        "maxTurnsPerRun": 40,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "enabled": false
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "metadata": null
+    },
+    {
+      "slug": "wufei",
+      "name": "Wufei",
+      "path": "agents/wufei/AGENTS.md",
+      "role": "qa",
+      "title": "QA Engineer",
+      "icon": "shield",
+      "capabilities": null,
+      "reportsToSlug": "heero",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-opus-4-6",
+        "maxTurnsPerRun": 30,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "enabled": false
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "metadata": null
+    },
+    {
+      "slug": "cid",
+      "name": "Cid",
+      "path": "agents/cid/AGENTS.md",
+      "role": "devops",
+      "title": "DevOps Engineer",
+      "icon": "rocket",
+      "capabilities": null,
+      "reportsToSlug": "heero",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-opus-4-6",
+        "maxTurnsPerRun": 30,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "enabled": false
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "metadata": null
+    },
+    {
+      "slug": "asuka",
+      "name": "Asuka",
+      "path": "agents/asuka/AGENTS.md",
+      "role": "engineer",
+      "title": "Frontend Engineer",
+      "icon": "palette",
+      "capabilities": null,
+      "reportsToSlug": "heero",
+      "adapterType": "claude_local",
+      "adapterConfig": {
+        "env": {
+          "CLAUDECODE": {
+            "type": "plain",
+            "value": ""
+          }
+        },
+        "model": "claude-opus-4-6",
+        "maxTurnsPerRun": 35,
+        "dangerouslySkipPermissions": true
+      },
+      "runtimeConfig": {
+        "heartbeat": {
+          "enabled": false
+        }
+      },
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "metadata": null
+    }
+  ],
+  "requiredSecrets": []
+}

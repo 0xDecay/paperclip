@@ -1,0 +1,39 @@
+# Real env files — only .env.example is tracked
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+!.env.example.*
+
+# Auth files (Paperclip, Hermes, 1Password)
+auth.json
+*/auth.json
+**/auth.json
+master.key
+
+# Paperclip runtime state
+.paperclip/
+instances/*/data/
+instances/*/db/
+instances/*/secrets/
+instances/*/logs/
+
+# Hermes runtime state
+.hermes/profiles/*/sessions/
+.hermes/profiles/*/logs/
+.hermes/profiles/*/state.db
+.hermes/profiles/*/auth.json
+
+# Common secrets
+*.pem
+*.key
+*_token
+*_secret
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

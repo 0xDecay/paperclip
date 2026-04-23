@@ -1,0 +1,18 @@
+[Unit]
+Description=Hermes auto-update (release-gated, with rollback)
+Documentation=file:///opt/hermes/src/hermes-agent/docs/getting-started/updating.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/hermes-auto-update
+# Prevent overlapping runs with the timer if a previous unit is still active
+TimeoutStartSec=30min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=5
+
+[Install]
+WantedBy=multi-user.target

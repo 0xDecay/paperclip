@@ -1,0 +1,19 @@
+[Unit]
+Description=Hermes AI Agent Gateway (Docker)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/hermes
+ExecStart=/usr/bin/docker compose -f /opt/hermes/docker-compose.yml up
+ExecStop=/usr/bin/docker compose -f /opt/hermes/docker-compose.yml down
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hermes-gateway
+
+[Install]
+WantedBy=multi-user.target

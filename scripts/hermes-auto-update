@@ -1,0 +1,360 @@
+#!/usr/bin/env bash
+#
+# hermes-auto-update — keep mootoshi's Hermes install in sync with upstream releases.
+#
+# Layout it expects:
+#   /opt/hermes/src/hermes-agent/    persistent git clone (build source, bootstrapped at install time)
+#   /opt/hermes/venv/                pip venv used by /usr/local/bin/hermes
+#   /opt/hermes/docker-compose.yml   references image tag "hermes:<semver>"
+#   /opt/hermes/data/.env            gateway env (also used for Discord alert credentials)
+#   /var/lib/hermes-auto-update/     state + lock
+#   /var/log/hermes-auto-update.log  structured JSON log
+#
+# Usage:
+#   hermes-auto-update                 check for update, apply if eligible
+#   hermes-auto-update --dry-run       print what would happen, mutate nothing
+#   hermes-auto-update --force-apply   apply even if the minor-version supervision gate says no
+#   hermes-auto-update --status        print current vs latest and exit
+#
+# Supervision gate (default ON):
+#   A patch-level bump (0.10.0 -> 0.10.1) applies automatically.
+#   A minor-or-major bump (0.10.x -> 0.11.0) requires a gate file:
+#     sudo touch /opt/hermes/src/.approved-<LATEST_TAG>
+#   Set HERMES_AUTO_UPDATE_MINOR=1 in /etc/default/hermes-auto-update to disable the gate.
+#
+set -euo pipefail
+umask 077
+
+# ---------- Config ----------
+SRC_DIR=${SRC_DIR:-/opt/hermes/src/hermes-agent}
+COMPOSE_FILE=${COMPOSE_FILE:-/opt/hermes/docker-compose.yml}
+VENV_BIN=${VENV_BIN:-/opt/hermes/venv/bin}
+STATE_DIR=${STATE_DIR:-/var/lib/hermes-auto-update}
+STATE_FILE=$STATE_DIR/state.json
+LOG_FILE=${LOG_FILE:-/var/log/hermes-auto-update.log}
+LOCK_FILE=$STATE_DIR/lock
+GATEWAY_ENV=${GATEWAY_ENV:-/opt/hermes/data/.env}
+EXTRAS='[messaging,voice,cron,cli,tts-premium,mcp]'
+GITHUB_REPO=${GITHUB_REPO:-NousResearch/hermes-agent}
+SERVICES_TO_RESTART=(paperclip.service hermes-gateway.service hermes-hudui-gateway.service hermes-hudui-paperclip.service)
+PAPERCLIP_HEALTH_URL=${PAPERCLIP_HEALTH_URL:-http://127.0.0.1:3100/api/health}
+
+# Defaults from env file, if present
+[ -r /etc/default/hermes-auto-update ] && . /etc/default/hermes-auto-update
+
+HERMES_AUTO_UPDATE_MINOR=${HERMES_AUTO_UPDATE_MINOR:-0}
+
+# ---------- Args ----------
+MODE=run
+DRY_RUN=0
+FORCE_APPLY=0
+for arg in "$@"; do
+  case $arg in
+    --dry-run)      DRY_RUN=1 ;;
+    --force-apply)  FORCE_APPLY=1 ;;
+    --status)       MODE=status ;;
+    -h|--help)
+      sed -n '3,27p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) echo "unknown arg: $arg" >&2; exit 2 ;;
+  esac
+done
+
+# ---------- Logging ----------
+mkdir -p "$STATE_DIR"
+touch "$LOG_FILE"
+chmod 640 "$LOG_FILE"
+
+log() {
+  local level=$1; shift
+  local msg=$*
+  local ts
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  local json
+  json=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$msg")
+  printf '{"ts":"%s","level":"%s","msg":%s}\n' "$ts" "$level" "$json" | tee -a "$LOG_FILE" >&2
+}
+
+die() { log error "$*"; exit 1; }
+
+# ---------- Discord alert via existing gateway bot ----------
+notify_discord() {
+  local level=$1; shift
+  local msg=$*
+  local token user dm_id
+  [ -r "$GATEWAY_ENV" ] || return 0
+  token=$(grep -E '^DISCORD_BOT_TOKEN=' "$GATEWAY_ENV" | head -1 | cut -d= -f2- | tr -d '\r\n"'"'")
+  user=$(grep -E '^DISCORD_ALLOWED_USERS=' "$GATEWAY_ENV" | head -1 | cut -d= -f2- | tr -d '\r\n"'"'" | cut -d, -f1)
+  [ -z "$token" ] && { log warn "discord: no bot token, skipping alert"; return 0; }
+  [ -z "$user" ]  && { log warn "discord: no allowed user, skipping alert"; return 0; }
+  local emoji=":bell:"
+  case "$level" in
+    ok)    emoji=":white_check_mark:" ;;
+    warn)  emoji=":warning:" ;;
+    error) emoji=":x:" ;;
+  esac
+  dm_id=$(curl -fsS --max-time 10 -X POST \
+    -H "Authorization: Bot $token" -H "Content-Type: application/json" \
+    -d "{\"recipient_id\":\"$user\"}" \
+    "https://discord.com/api/v10/users/@me/channels" 2>/dev/null | jq -r .id 2>/dev/null || true)
+  if [ -z "$dm_id" ] || [ "$dm_id" = null ]; then
+    log warn "discord: DM channel open failed (user=$user)"; return 0
+  fi
+  local body
+  body=$(python3 -c 'import json,sys; print(json.dumps({"content": sys.argv[1] + " hermes-auto-update: " + sys.argv[2]}))' "$emoji" "$msg")
+  curl -fsS --max-time 10 -X POST \
+    -H "Authorization: Bot $token" -H "Content-Type: application/json" \
+    -d "$body" \
+    "https://discord.com/api/v10/channels/$dm_id/messages" >/dev/null 2>&1 || log warn "discord: message post failed"
+}
+
+# ---------- Helpers ----------
+tag_semver() {
+  # Read "name" field of a release (e.g. "Hermes Agent v0.10.0 (v2026.4.16)") and return 0.10.0
+  local tag=$1
+  curl -fsS --max-time 15 "https://api.github.com/repos/$GITHUB_REPO/releases/tags/$tag" \
+    | jq -r '.name' \
+    | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d 'v'
+}
+
+semver_bump_kind() {
+  # echo patch | minor | major  (cur -> new)
+  local cur=$1 new=$2
+  local c1 c2 c3 n1 n2 n3
+  IFS=. read -r c1 c2 c3 <<<"$cur"
+  IFS=. read -r n1 n2 n3 <<<"$new"
+  if [ "$c1" != "$n1" ]; then echo major
+  elif [ "$c2" != "$n2" ]; then echo minor
+  else echo patch
+  fi
+}
+
+state_write() {
+  # $1=key $2=value (unquoted; json-safe string)
+  local k=$1 v=$2
+  [ -f "$STATE_FILE" ] || echo '{}' > "$STATE_FILE"
+  jq --arg k "$k" --arg v "$v" '.[$k] = $v' "$STATE_FILE" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
+}
+
+state_read() {
+  local k=$1
+  [ -f "$STATE_FILE" ] || { echo ""; return; }
+  jq -r --arg k "$k" '.[$k] // ""' "$STATE_FILE"
+}
+
+# ---------- Lock ----------
+exec 9<>"$LOCK_FILE"
+if ! flock -n 9; then
+  log warn "another instance holds the lock, exiting"
+  exit 0
+fi
+
+# ---------- Preconditions ----------
+[ -d "$SRC_DIR/.git" ]    || die "source clone missing at $SRC_DIR — bootstrap first"
+[ -f "$COMPOSE_FILE" ]    || die "compose file missing at $COMPOSE_FILE"
+[ -x "$VENV_BIN/pip" ]    || die "venv pip missing at $VENV_BIN/pip"
+command -v docker >/dev/null   || die "docker not installed"
+command -v jq >/dev/null       || die "jq not installed"
+
+# ---------- Status / release query ----------
+LATEST_TAG=$(curl -fsS --max-time 15 "https://api.github.com/repos/$GITHUB_REPO/releases/latest" | jq -r .tag_name)
+[ -n "$LATEST_TAG" ] && [ "$LATEST_TAG" != null ] || die "failed to fetch latest release tag"
+
+CURRENT_TAG=$(git -C "$SRC_DIR" describe --tags --exact-match HEAD 2>/dev/null \
+              || echo "detached-$(git -C "$SRC_DIR" rev-parse --short HEAD)")
+
+LATEST_SEMVER=$(tag_semver "$LATEST_TAG")
+CURRENT_SEMVER=$(tag_semver "$CURRENT_TAG" 2>/dev/null || echo "")
+
+log info "current=$CURRENT_TAG ($CURRENT_SEMVER)  latest=$LATEST_TAG ($LATEST_SEMVER)"
+
+if [ "$MODE" = status ]; then
+  printf 'current:  %-15s (%s)\n' "$CURRENT_TAG" "$CURRENT_SEMVER"
+  printf 'latest:   %-15s (%s)\n' "$LATEST_TAG" "$LATEST_SEMVER"
+  if [ "$CURRENT_TAG" = "$LATEST_TAG" ]; then echo 'status:   up-to-date'
+  else echo "status:   update available ($(semver_bump_kind "$CURRENT_SEMVER" "$LATEST_SEMVER"))"
+  fi
+  exit 0
+fi
+
+# Already up-to-date?
+if [ "$CURRENT_TAG" = "$LATEST_TAG" ]; then
+  log info "up-to-date; nothing to do"
+  state_write last_check "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  exit 0
+fi
+
+# Supervision gate
+BUMP_KIND=$(semver_bump_kind "$CURRENT_SEMVER" "$LATEST_SEMVER")
+if [ "$BUMP_KIND" != patch ] && [ "$FORCE_APPLY" -eq 0 ] && [ "$HERMES_AUTO_UPDATE_MINOR" != 1 ]; then
+  APPROVAL_FLAG=/opt/hermes/src/.approved-$LATEST_TAG
+  if [ ! -e "$APPROVAL_FLAG" ]; then
+    log warn "supervision gate: $BUMP_KIND bump $CURRENT_SEMVER -> $LATEST_SEMVER requires approval flag at $APPROVAL_FLAG"
+    # Alert once per tag using state
+    LAST_ALERTED=$(state_read last_alerted_tag)
+    if [ "$LAST_ALERTED" != "$LATEST_TAG" ]; then
+      notify_discord warn "staged $BUMP_KIND update $CURRENT_SEMVER -> $LATEST_SEMVER awaiting approval. SSH in and: sudo touch $APPROVAL_FLAG"
+      state_write last_alerted_tag "$LATEST_TAG"
+    fi
+    exit 0
+  fi
+  log info "supervision gate cleared via flag file for $LATEST_TAG"
+fi
+
+# ---------- DRY RUN ----------
+if [ "$DRY_RUN" -eq 1 ]; then
+  cat <<DRY
+[DRY-RUN] Would perform:
+  git -C $SRC_DIR fetch --tags --prune
+  git -C $SRC_DIR checkout $LATEST_TAG
+  docker build -t hermes:$LATEST_SEMVER $SRC_DIR
+  sed -i "s|^    image: hermes:.*|    image: hermes:$LATEST_SEMVER|" $COMPOSE_FILE
+  $VENV_BIN/pip install --upgrade "$SRC_DIR$EXTRAS"
+  systemctl restart ${SERVICES_TO_RESTART[*]}
+  health checks: $PAPERCLIP_HEALTH_URL + docker ps hermes-gateway
+DRY
+  exit 0
+fi
+
+# ---------- Snapshot rollback handles ----------
+log info "snapshotting rollback state"
+IMAGE_PREV=$(docker inspect hermes-gateway --format '{{.Image}}' 2>/dev/null || echo "")
+IMAGE_TAG_PREV=$(grep -E '^    image: hermes:' "$COMPOSE_FILE" | head -1 | awk '{print $2}' | cut -d: -f2)
+RESTART_COUNT_PREV=$(docker inspect hermes-gateway --format '{{.RestartCount}}' 2>/dev/null || echo "0")
+SRC_PREV=$(git -C "$SRC_DIR" rev-parse HEAD)
+COMPOSE_BAK="$COMPOSE_FILE.bak.$(date +%s)"
+cp "$COMPOSE_FILE" "$COMPOSE_BAK"
+log info "prev image=$IMAGE_PREV tag=$IMAGE_TAG_PREV restart_count=$RESTART_COUNT_PREV src=$SRC_PREV compose-bak=$COMPOSE_BAK"
+
+# Rollback function (called on failure). Disables ERR trap so a failed step
+# inside rollback does not re-trigger rollback recursively.
+rollback() {
+  trap - ERR
+  set +e
+  local stage=$1 errmsg=$2
+  log error "rollback triggered at stage=$stage: $errmsg"
+  git -C "$SRC_DIR" checkout --quiet "$SRC_PREV" 2>&1 | tee -a "$LOG_FILE" >&2
+  mv -f "$COMPOSE_BAK" "$COMPOSE_FILE"
+  # Reinstall venv from the previous source tree (already checked out)
+  "$VENV_BIN/pip" install --upgrade --quiet "${SRC_DIR}${EXTRAS}" 2>&1 | tee -a "$LOG_FILE" >&2
+  # Restart services to pick up old state
+  systemctl restart "${SERVICES_TO_RESTART[@]}" 2>&1 | tee -a "$LOG_FILE" >&2
+  notify_discord error "update $CURRENT_TAG -> $LATEST_TAG FAILED at $stage: $errmsg. Rolled back to $IMAGE_TAG_PREV."
+  exit 1
+}
+
+trap 'rollback unknown "unexpected error on line $LINENO"' ERR
+
+# ---------- Apply ----------
+log info "fetch tags"
+git -C "$SRC_DIR" fetch --tags --prune --quiet
+
+log info "checkout $LATEST_TAG"
+git -C "$SRC_DIR" checkout --quiet "$LATEST_TAG"
+
+NEW_IMAGE_TAG="hermes:$LATEST_SEMVER"
+log info "docker build $NEW_IMAGE_TAG"
+docker build --quiet -t "$NEW_IMAGE_TAG" "$SRC_DIR" >/dev/null 2>&1 \
+  || rollback docker-build "docker build failed — check $LOG_FILE and journalctl"
+
+log info "rewrite compose image tag -> $NEW_IMAGE_TAG"
+sed -i.tmp -E "s|^(    image: )hermes:.*|\1hermes:$LATEST_SEMVER|" "$COMPOSE_FILE" || rollback compose-rewrite "sed failed"
+rm -f "$COMPOSE_FILE.tmp"
+grep -qE "^    image: hermes:$LATEST_SEMVER\$" "$COMPOSE_FILE" \
+  || rollback compose-rewrite "compose image line not updated as expected"
+
+log info "reinstall venv from source"
+"$VENV_BIN/pip" install --upgrade --quiet "${SRC_DIR}${EXTRAS}" 2>&1 | tee -a "$LOG_FILE" >&2 \
+  || rollback pip-install "venv reinstall failed"
+
+log info "normalize venv permissions (prevents paperclip user ModuleNotFoundError)"
+chmod -R a+rX /opt/hermes/venv || log warn "chmod failed (non-fatal)"
+
+log info "re-apply hermes-paperclip-adapter monkey-patch if needed"
+# Rationale: paperclip-adapter comes from npm (pulled by paperclip itself), not
+# from our Hermes source tree. `npm install` can re-fetch it at any point,
+# clobbering our local fixes for the env-binding-dict coercion bug (A) and the
+# missing PAPERCLIP_API_KEY injection (B). See
+# ops/patches/hermes-paperclip-adapter.patch in the fractional repo and lesson
+# _knowledge/lessons/2026-04-18-content-pipeline-four-chained-defects.md
+# for the full defect writeup.
+#
+# The patch ships a marker — the string `ctx.authToken && !env.PAPERCLIP_API_KEY`
+# does not exist in the upstream adapter. If it's missing, we need to re-apply.
+ADAPTER_EXEC="/home/paperclip/node_modules/hermes-paperclip-adapter/dist/server/execute.js"
+ADAPTER_PATCH="${PATCHES_DIR}/hermes-paperclip-adapter.patch"
+if [[ -f "$ADAPTER_EXEC" && -f "$ADAPTER_PATCH" ]]; then
+  if grep -q 'ctx.authToken && !env.PAPERCLIP_API_KEY' "$ADAPTER_EXEC"; then
+    log info "adapter patch already applied (marker found) — skipping"
+  else
+    log warn "adapter patch marker missing — re-applying from $ADAPTER_PATCH"
+    ADAPTER_BACKUP="${ADAPTER_EXEC}.bak-$(date -u +%Y%m%d-%H%M%S)"
+    cp "$ADAPTER_EXEC" "$ADAPTER_BACKUP" || log warn "adapter backup failed (non-fatal)"
+    if patch -p0 -d / < "$ADAPTER_PATCH" 2>&1 | tee -a "$LOG_FILE" >&2; then
+      log info "adapter patch re-applied (backup: $ADAPTER_BACKUP)"
+      # Restart paperclip so new env-handling takes effect on the next heartbeat.
+      # paperclip.service is in SERVICES_TO_RESTART below, so it'll restart
+      # anyway — but do an explicit restart here in case this block ever
+      # runs outside an upgrade (defensive).
+      :
+    else
+      log warn "adapter patch apply FAILED — paperclip heartbeats will run with upstream (broken) adapter until fixed manually"
+    fi
+  fi
+else
+  [[ ! -f "$ADAPTER_EXEC" ]] && log info "adapter execute.js not found — skipping patch step"
+  [[ ! -f "$ADAPTER_PATCH" ]] && log warn "adapter patch file not found at $ADAPTER_PATCH — skipping patch step"
+fi
+
+log info "restart services: ${SERVICES_TO_RESTART[*]}"
+systemctl restart "${SERVICES_TO_RESTART[@]}" \
+  || rollback service-restart "systemctl restart failed"
+
+# ---------- Health check ----------
+# Gateway is a Discord/Telegram bot (no HTTP port), so health is judged by:
+#   1. Container status == "running"
+#   2. RestartCount has NOT incremented beyond the pre-update snapshot
+#      (catches crash-loops where the container boots, prints a welcome screen,
+#      exits 0, and restart:unless-stopped cycles it — what bit us on the
+#      0.7.0 -> 0.10.0 jump when upstream moved CMD out of the Dockerfile).
+#   3. Container uptime > 60s at final check (proves stability across the window).
+# Paperclip exposes /api/health, so we probe it directly.
+log info "health check (90s grace, then 3x retries @ 20s)"
+sleep 90
+OK=0
+for attempt in 1 2 3; do
+  PAPERCLIP_OK=no
+  GATEWAY_OK=no
+  curl -fsS --max-time 10 "$PAPERCLIP_HEALTH_URL" >/dev/null 2>&1 && PAPERCLIP_OK=yes
+
+  GW_STATUS=$(docker inspect hermes-gateway --format '{{.State.Status}}' 2>/dev/null || echo missing)
+  GW_RESTART=$(docker inspect hermes-gateway --format '{{.RestartCount}}' 2>/dev/null || echo -1)
+  GW_STARTED=$(docker inspect hermes-gateway --format '{{.State.StartedAt}}' 2>/dev/null || echo "")
+  # Uptime seconds since last start
+  if [ -n "$GW_STARTED" ]; then
+    GW_UPTIME=$(( $(date -u +%s) - $(date -u -d "$GW_STARTED" +%s 2>/dev/null || echo "$(date -u +%s)") ))
+  else
+    GW_UPTIME=0
+  fi
+
+  if [ "$GW_STATUS" = running ] && [ "$GW_RESTART" -le "$RESTART_COUNT_PREV" ] && [ "$GW_UPTIME" -ge 60 ]; then
+    GATEWAY_OK=yes
+  fi
+
+  log info "health attempt=$attempt paperclip=$PAPERCLIP_OK gateway_status=$GW_STATUS gateway_restart=$GW_RESTART(prev=$RESTART_COUNT_PREV) gateway_uptime=${GW_UPTIME}s"
+  if [ "$PAPERCLIP_OK" = yes ] && [ "$GATEWAY_OK" = yes ]; then OK=1; break; fi
+  sleep 20
+done
+
+[ "$OK" -eq 1 ] || rollback health-check "paperclip=$PAPERCLIP_OK gateway_status=$GW_STATUS restart_count=$GW_RESTART (was $RESTART_COUNT_PREV) uptime=${GW_UPTIME}s"
+
+# ---------- Success ----------
+trap - ERR
+rm -f "$COMPOSE_BAK"
+state_write last_applied_tag "$LATEST_TAG"
+state_write last_applied_semver "$LATEST_SEMVER"
+state_write last_applied_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+state_write last_alerted_tag ""
+log info "update ok: $CURRENT_SEMVER ($CURRENT_TAG) -> $LATEST_SEMVER ($LATEST_TAG)"
+notify_discord ok "updated $CURRENT_SEMVER -> $LATEST_SEMVER ($LATEST_TAG). all services healthy."
+exit 0

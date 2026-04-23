@@ -1,0 +1,14 @@
+# Hermes
+Hermes Agent v0.10.0 (2026.4.16)
+Project: /opt/hermes/venv/lib/python3.12/site-packages
+Python: 3.12.3
+OpenAI SDK: 2.31.0
+
+# hermes-paperclip-adapter (upstream, stock MIT)
+name=hermes-paperclip-adapter
+version=0.2.1
+repo=https://github.com/NousResearch/hermes-paperclip-adapter
+license=MIT
+
+# Node
+v20.20.1

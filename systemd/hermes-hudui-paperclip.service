@@ -1,0 +1,16 @@
+[Unit]
+Description=Hermes HUD Web UI — Paperclip (agent fleet consciousness)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=paperclip
+Group=paperclip
+Environment=HERMES_HOME=/home/paperclip/.hermes
+ExecStart=/opt/hermes-hudui/venv/bin/hermes-hudui --host 127.0.0.1 --port 3011
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

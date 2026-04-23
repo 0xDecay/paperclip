@@ -1,0 +1,16 @@
+[Unit]
+Description=Periodic check for new Hermes releases
+Documentation=file:///usr/local/bin/hermes-auto-update
+
+[Timer]
+# Every 6 hours at minute 0, with up to 30 min jitter so we don't hammer the GitHub API
+# in lockstep across multiple hosts.
+OnCalendar=*-*-* 00/6:00:00
+RandomizedDelaySec=1800
+# Run now if we missed a scheduled invocation while the host was off.
+Persistent=true
+Unit=hermes-auto-update.service
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

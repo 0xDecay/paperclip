@@ -1,0 +1,18 @@
+[Unit]
+Description=Paperclip Agent Orchestration
+After=network.target
+
+[Service]
+Type=simple
+User=paperclip
+WorkingDirectory=/home/paperclip
+EnvironmentFile=/home/paperclip/.paperclip/instances/default/.env
+ExecStart=/usr/bin/npx paperclipai run
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+Environment=HOME=/home/paperclip
+Environment=PATH=/usr/bin:/usr/local/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

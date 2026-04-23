@@ -1,0 +1,7 @@
+#!/bin/bash
+# Wrap any command with 1Password secret injection.
+# Usage: op-exec <env-tpl-path> <command> [args...]
+set -e
+export OP_SERVICE_ACCOUNT_TOKEN=$(cat ${SECRETS_DIR}/op_sa_token)
+ENV_TPL="$1"; shift
+exec op run --env-file="$ENV_TPL" -- "$@"
